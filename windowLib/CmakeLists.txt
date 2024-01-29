@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.27.2)
+
+project("wndLib")
+
+add_executable("${PROJECT_NAME}" main.cpp winLib.cpp wndBackend.cpp)
+find_package(Threads REQUIRED)
+
+SET(CMAKE_EXE_LINKER_FLAGS  "${CMAKE_EXE_LINKER_FLAGS} -static -gstabs+")
+
+target_link_libraries("${PROJECT_NAME}" PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/libs/conDebug.a" Threads::Threads d2d1)

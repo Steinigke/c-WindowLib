@@ -1,0 +1,3 @@
+D:/ProProjects/C++/Projects/windowLibs/cmake-build-debug/CMakeFiles/wndLib.dir
+D:/ProProjects/C++/Projects/windowLibs/cmake-build-debug/CMakeFiles/edit_cache.dir
+D:/ProProjects/C++/Projects/windowLibs/cmake-build-debug/CMakeFiles/rebuild_cache.dir
