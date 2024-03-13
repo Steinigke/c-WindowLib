@@ -6,8 +6,8 @@
 #include "libs/conDebug.h"
 #include "wndBackend.h"
 #include <d2d1.h>
-#include <thread>
 #include <string>
+#include <thread>
 
 //////////////////////////////////////////////////////////////////////
 //																	//
@@ -31,9 +31,9 @@ LRESULT CALLBACK wndWrapper::windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPA
                 conDebug out{"", "dsWnd::", "[id = " + std::to_string(render->id) + "]"};
                 out("Window Destoryed");
                 std::thread([render](){
-                    render->wrapper.pWindowTarget.release();
-                    render->wrapper.pFactory.release();
-                    render->wrapper.pBrush.release();
+                    render->wrapper.pWindowTarget.reset();
+                    render->wrapper.pFactory.reset();
+                    render->wrapper.pBrush.reset();
                 }).detach();
             }
 				return 0;
@@ -63,9 +63,11 @@ LRESULT CALLBACK wndWrapper::windowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPA
                     render->onPaint();
                     EndPaint(render->wrapper.hwnd, &ps);
 				}).detach();
+                return 0;
 				}
-		}
-		return DefWindowProc(hwnd, uMsg, wParam, lParam);
+        default:	return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    }
+
 }
 
 bool wndWrapper::createRenderObjects() {
@@ -91,7 +93,7 @@ bool wndWrapper::createRenderObjects() {
     return true;
 }
 
-bool wndWrapper::createWindow(wndRender *render){
+bool wndWrapper::createWindow(wndRender *render) const {
 	conDebug out{"", "crWnd::", "[id = " + std::to_string(idc) + "]"};
 	WNDCLASS wc{};	
 	std::wstring cn = std::to_wstring(idc);
@@ -125,23 +127,28 @@ bool wndWrapper::createWindow(wndRender *render){
 	
 }
 
-void wndWrapper::onPaint(char* buffer, int id){
-	if(!pFactory || !pWindowTarget || !pBrush){
+void wndWrapper::onPaint(char* buffer, unsigned int id, const winLib::Color& background){
+    std::unique_lock l{drawMutex};
+
+    conDebug out(" Paint","opWnd::","[id = " + std::to_string(id) + "]");
+    if(!pFactory || !pWindowTarget || !pBrush){
         if(!createRenderObjects()){
             return;
         }
     }
-
+    out("Calling BeginDraw");
     pWindowTarget->BeginDraw();
 
     unsigned int drawCounter{0};
-	conDebug out("","opWnd::","[id = " + std::to_string(id) + "]");
-	if(!buffer){
+
+    if(!buffer){
 		out("i swear i am painting");
+        return;
 	}
-	
+
+	out("Enter drawingLoop");
 	drawTypes type;
-    pWindowTarget->Clear(D2D1::ColorF(1.0f,0.0f,0.0f));
+    pWindowTarget->Clear(D2D1::ColorF(0.0f,0.0f,0.0f));
 	do{
         type = static_cast<drawTypes>(buffer[drawCounter]);
         ++drawCounter;
@@ -153,31 +160,55 @@ void wndWrapper::onPaint(char* buffer, int id){
 			case rect: {
                 auto *rect = reinterpret_cast<wndClass::Rect *>(&buffer[drawCounter]);
 //                out("drawing Rect");
-                pBrush->SetColor(rect->str.clr());
+                pBrush->SetColor(rect->str.getDrawingClr());
                 D2D1_RECT_F rc = rect->getDrawingRect();
                 pWindowTarget->DrawRectangle(&rc,pBrush.get(),rect->str.thickness);
                 drawCounter += rect->next;
                 break;
             }
-            case rectFill:
-				out("drawing Filled Rect");
-				break;
+            case rectFill: {
+//                out("drawing Filled Rect");
+                auto *rectFill = reinterpret_cast<wndClass::RectFill *>(&buffer[drawCounter]);
+                pBrush->SetColor(rectFill->str.getDrawingClr());
+                D2D1_RECT_F rc = rectFill->getDrawingRect();
+                pWindowTarget->FillRectangle(rc, pBrush.get());
+                drawCounter += rectFill->next;
+            }
+                break;
 
             case line: {
                 auto *line = reinterpret_cast<wndClass::Line *>(&buffer[drawCounter]);
-                pBrush->SetColor(line->str.clr());
+                pBrush->SetColor(line->str.getDrawingClr());
                 pWindowTarget->DrawLine(line->getDrawingStart(),line->getDrawingEnd(),pBrush.get(),line->str.thickness);
                 drawCounter += line->next;
                 break;
+            }
+
+            case ellipse: {
+
+                auto *ellipse = reinterpret_cast<wndClass::Ellipse*>(&buffer[drawCounter]);
+                pBrush->SetColor(ellipse->str.getDrawingClr());
+
+                D2D1_ELLIPSE e = D2D1::Ellipse(D2D1::Point2F(ellipse->x, ellipse->y) , ellipse->radiusX, ellipse->radiusY);
+
+                if(ellipse->filled){
+                    pWindowTarget->FillEllipse(e, pBrush.get());
+                } else {
+                    pWindowTarget->DrawEllipse(e, pBrush.get(), ellipse->str.thickness);
+//                    pWindowTarget->Draw
+                }
+
+                drawCounter += ellipse->next;
             }
 			default: out("HOLY SHIT WHAT IS HAPPENING");
 		}
 		
 	}while(type != end);
+    out("Calling EndDraw");
 	if(pWindowTarget->EndDraw() == D2DERR_RECREATE_TARGET){
-        pWindowTarget.release();
-        pFactory.release();
-        pBrush.release();
+        pWindowTarget.reset();
+        pFactory.reset();
+        pBrush.reset();
     }
 
 }
@@ -208,43 +239,44 @@ void wndRender::onPaint(){
 //////////////////////////////////////////////////////////////////////
 
 
-wndClass::color::color(float r, float g, float b, float a) : r{r}, g{g}, b{b}, a{a} {}
+wndClass::Stroke::Stroke(float thick, winLib::Color clr) : thickness{thick}, clr{clr}{}
 
-D2D1_COLOR_F wndClass::color::operator()() {
-    return D2D1_COLOR_F{r,g,b,a};
+wndClass::Stroke::Stroke() : clr{1.0f, 1.0f, 1.0f} , thickness(3.0f){}
+
+D2D1_COLOR_F wndClass::Stroke::getDrawingClr() const {
+            return D2D1_COLOR_F{clr.r, clr.g, clr.b, clr.a};
 }
 
+wndClass::Rect::Rect(float t, float b, float l, float r) : top{t}, bottom{b}, left{l}, right{r} {
+    next = sizeof(Rect);
+}
 
-wndClass::stroke::stroke(float thick, wndClass::color clr) : thickness{thick}, clr{clr}{}
-
-wndClass::stroke::stroke() : clr{0.0f, 0.0f, 0.0f} , thickness(2.0f){}
-
-
-wndClass::Rect::Rect(float t, float b, float l, float r) : Rect(wndClass::stroke{},t,b,l,r) {}
-
-wndClass::Rect::Rect(wndClass::stroke str, float t, float b, float l, float r) : top{t}, bottom{b}, left{l}, right{r}   {
+wndClass::Rect::Rect(wndClass::Stroke str, float t, float b, float l, float r) : top{t}, bottom{b}, left{l}, right{r}   {
     next = sizeof(Rect);
     this->str = str;
 }
 
-D2D1_RECT_F wndClass::Rect::getDrawingRect() {
+D2D1_RECT_F wndClass::Rect::getDrawingRect() const{
     return D2D1_RECT_F{left,top,right,bottom};
 }
 
-wndClass::Line::Line(wndClass::stroke, float xS, float yS, float xE, float yE) : xStart{xS}, yStart{yS}, xEnd{xE}, yEnd{yE}{
+wndClass::RectFill::RectFill(winLib::Color clr, float t, float b, float l, float r) : Rect(Stroke{0, clr},t,b,l,r) {}
+
+
+wndClass::Line::Line(wndClass::Stroke, float xS, float yS, float xE, float yE) : xStart{xS}, yStart{yS}, xEnd{xE}, yEnd{yE}{
     next = sizeof(Line);
     this->str = str;
 }
 
-wndClass::Line::Line(float xS, float yS, float xE, float yE) : Line(stroke{}, xS, yS, xE, yE) {
-
+wndClass::Line::Line(float xS, float yS, float xE, float yE) : xStart{xS}, yStart{yS}, xEnd{xE}, yEnd{yE}{
+    next = sizeof(Line);
 }
 
-D2D1_POINT_2F wndClass::Line::getDrawingStart() {
+D2D1_POINT_2F wndClass::Line::getDrawingStart() const{
     return D2D1_POINT_2F{xStart, yStart};
 }
 
-D2D1_POINT_2F wndClass::Line::getDrawingEnd() {
+D2D1_POINT_2F wndClass::Line::getDrawingEnd() const{
     return {xEnd,yEnd};
 }
 
@@ -257,7 +289,7 @@ D2D1_POINT_2F wndClass::Line::getDrawingEnd() {
 
 void wndWindowLoop(){
 	MSG msg = { };
-	while (GetMessage(&msg, NULL, 0, 0) > 0)
+	while (GetMessage(&msg, nullptr, 0, 0) > 0)
 	{
 		TranslateMessage(&msg);
 		DispatchMessage(&msg);

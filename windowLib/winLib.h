@@ -1,8 +1,31 @@
-#include "wndBackend.h"
+#ifndef WNDLIB
+#define WNDLIB
 
-struct wndHandler{
-	wndRender render;
-};
+#include <vector>
+#include <memory>
+#include "Color.h"
+#include "wndAsset.h"
+#include "Layout.h"
 
-bool createWindowHandler(wndHandler *handler);
+struct wndRender;
 
+namespace winLib {
+
+    struct wndHandler {
+
+        ~wndHandler();
+        wndHandler();
+//        wndLayout lay;
+
+
+        bool createWindow();
+
+
+    private:
+        std::unique_ptr<wndRender> render;
+
+    };
+}
+void windowLoop();
+
+#endif

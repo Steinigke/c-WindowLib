@@ -8,19 +8,22 @@
 #define BUFFER_SIZE 1024
 #endif
 
+#include <mutex>
+#include "Color.h"
+
 struct wndRender;
 struct wndWrapper;
-struct color;
 
 enum drawTypes{
 	end=0,
     rect,
 	rectFill,
-	line
+	line,
+    ellipse
 };
 
 struct wndWrapper{
-	
+
 	static unsigned int count;
 	static unsigned int idc;
 	
@@ -32,13 +35,15 @@ struct wndWrapper{
     std::unique_ptr<ID2D1HwndRenderTarget> pWindowTarget;
     std::unique_ptr<ID2D1SolidColorBrush> pBrush;
 
+    std::mutex drawMutex;
+
     bool createRenderObjects();
 
-	bool createWindow(wndRender *render);
+	bool createWindow(wndRender *render) const;
 
 
 
-	void onPaint(char* buffer, int id);
+	void onPaint(char* buffer, unsigned int id, const winLib::Color& background);
 };
 
 struct wndRender{
@@ -74,62 +79,70 @@ void wndWindowLoop();
 
 namespace wndClass {
 
-    struct color {
-        float r, g, b, a;
-
-        color(float r, float g, float b, float a = 1.0f);
-
-        D2D1_COLOR_F operator()();
-    };
-
-    struct stroke {
+    struct Stroke {
 
         float thickness;
-        color clr;
+        winLib::Color clr;
 
-        stroke();
+        Stroke();
+        Stroke(float thickness, winLib::Color clr);
 
-        stroke(float thickness, wndClass::color clr);
+        D2D1_COLOR_F getDrawingClr() const;
+
 
     };
 
-    struct cmd {
+    struct Cmd {
         unsigned int next;
-        stroke str;
+        Stroke str;
 
     };
 
-    struct Rect : cmd {
+    struct Rect : Cmd {
         float top;
         float bottom;
         float left;
         float right;
 
         Rect(float t, float b, float l, float r);
-        Rect(stroke str, float t, float b, float l, float r);
+        Rect(Stroke str, float t, float b, float l, float r);
 
-        D2D1_RECT_F getDrawingRect();
+        D2D1_RECT_F getDrawingRect() const ;
     };
 
     struct RectFill : Rect {
-        color fill;
+
+        RectFill(winLib::Color clr, float t, float b, float l, float r);
 
     };
 
-    struct Line : cmd {
+    struct Ellipse : Cmd {
+
+        float x;
+        float y;
+        float radiusX;
+        float radiusY;
+        bool filled;
+
+
+        Ellipse(float xS, float xY, float radiusX, float radiusY);
+        Ellipse(float xS, float xY, float radius);
+
+
+    };
+
+    struct Line : Cmd {
         float xStart;
         float yStart;
         float xEnd;
         float yEnd;
 
-        Line(stroke str, float xS, float yS, float xE, float yE);
+        Line(Stroke str, float xS, float yS, float xE, float yE);
         Line(float xS, float yS, float xE, float yE);
 
-        D2D1_POINT_2F getDrawingStart();
+        D2D1_POINT_2F getDrawingStart() const;
 
-        D2D1_POINT_2F getDrawingEnd();
-
-
+        D2D1_POINT_2F getDrawingEnd() const;
     };
 
 }
